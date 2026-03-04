@@ -35,6 +35,8 @@ DEFAULT_OUTPUT_RTSP = "rtsp://localhost:8554/live/tracking"
 MAX_REASONABLE_FPS = 120
 FALLBACK_FPS = 25.0
 
+WINDOW_NAME = "YOLO11 RTSP Tracking"
+
 
 def build_ffmpeg_push_cmd(width: int, height: int, fps: float, output_rtsp: str) -> list:
     """Return the FFmpeg command list that pushes raw BGR frames to an RTSP server."""
@@ -124,6 +126,11 @@ def main():
         help="Disable the local display window.",
     )
     parser.add_argument(
+        "--fullscreen",
+        action="store_true",
+        help="Display the result window in fullscreen mode.",
+    )
+    parser.add_argument(
         "--no-output",
         action="store_true",
         help="Disable the RTSP output stream.",
@@ -132,6 +139,7 @@ def main():
 
     show = not args.no_show
     push_output = not args.no_output
+    fullscreen = args.fullscreen
 
     # ------------------------------------------------------------------
     # Resolve inference device
@@ -204,6 +212,14 @@ def main():
     #   iou      – NMS IoU overlap threshold
     # ------------------------------------------------------------------
     print("[INFO] Starting tracking. Press 'q' in the display window to quit.")
+    if show:
+        cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+        if fullscreen:
+            cv2.setWindowProperty(
+                WINDOW_NAME,
+                cv2.WND_PROP_FULLSCREEN,
+                cv2.WINDOW_FULLSCREEN,
+            )
     results = None
     try:
         results = model.track(
@@ -223,7 +239,7 @@ def main():
 
             # ---- Local display window ----
             if show:
-                cv2.imshow("YOLO11 RTSP Tracking", annotated_frame)
+                cv2.imshow(WINDOW_NAME, annotated_frame)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     print("[INFO] Quit key pressed – stopping.")
                     break
