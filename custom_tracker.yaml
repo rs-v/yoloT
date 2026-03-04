@@ -1,0 +1,32 @@
+# Custom tracker configuration for YOLO11 RTSP tracking
+# Reference: https://docs.ultralytics.com/modes/track/#how-do-i-configure-a-custom-tracker-for-ultralytics-yolo
+#
+# Pass to model.track() via:  tracker="custom_tracker.yaml"
+# CLI equivalent:             yolo track model=yolo11n.pt source=<url> tracker=custom_tracker.yaml
+#
+# Switch between algorithms by changing tracker_type:
+#   botsort   – BoT-SORT  (better accuracy, ReID support)
+#   bytetrack – ByteTrack (faster, no ReID)
+
+tracker_type: botsort  # (str) tracker algorithm: botsort | bytetrack
+
+# ── Detection association ──────────────────────────────────────────────────────
+track_high_thresh: 0.25   # (float) high-confidence detection threshold for first-stage match
+track_low_thresh: 0.1     # (float) low-confidence threshold for second-stage recovery match
+new_track_thresh: 0.25    # (float) minimum score to initialise a new track
+match_thresh: 0.8         # (float) IoU/cost similarity threshold for track-detection association
+fuse_score: true          # (bool)  fuse detection score with IoU for association (stabilises weak detections)
+
+# ── Track lifecycle ────────────────────────────────────────────────────────────
+track_buffer: 30          # (int)   frames to keep a lost track alive before deletion
+
+# ── BoT-SORT: global motion compensation ──────────────────────────────────────
+# sparseOptFlow | orb | sift | ecc | none
+# Use sparseOptFlow or ecc for moving-camera / PTZ scenes; none for static camera.
+gmc_method: sparseOptFlow
+
+# ── BoT-SORT: Re-Identification (ReID) ────────────────────────────────────────
+with_reid: false          # (bool) enable ReID embedding model (requires extra compute)
+proximity_thresh: 0.5     # (float) min IoU between tracks to trigger ReID comparison
+appearance_thresh: 0.8    # (float) min cosine similarity for appearance-based re-association
+model: auto               # (str)  ReID model name / path; "auto" uses detector features when available
