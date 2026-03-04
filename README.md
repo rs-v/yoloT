@@ -25,6 +25,65 @@ sudo apt-get install -y ffmpeg
 
 ---
 
+## CUDA 加速
+
+脚本启动时会**自动检测 CUDA**：若检测到可用的 NVIDIA GPU，则自动使用 GPU 0 进行推理；否则回退到 CPU。
+
+### 安装支持 CUDA 的 PyTorch
+
+`ultralytics` 会自动安装 PyTorch，但默认安装的是 CPU 版本。  
+要启用 CUDA 加速，请**在安装 `ultralytics` 之前**手动安装对应 CUDA 版本的 PyTorch：
+
+```bash
+# 查看适合您 CUDA 版本的命令：https://pytorch.org/get-started/locally/
+
+# 示例：CUDA 12.1
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# 示例：CUDA 11.8
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+
+# 然后安装其余依赖
+pip install -r requirements.txt
+```
+
+### 验证 CUDA 是否可用
+
+```bash
+python -c "
+import torch
+available = torch.cuda.is_available()
+name = torch.cuda.get_device_name(0) if available and torch.cuda.device_count() > 0 else 'N/A'
+print('CUDA available:', available, '|', name)
+"
+```
+
+### 手动指定推理设备
+
+脚本启动时自动选择最优设备，也可通过 `--device` 手动覆盖：
+
+```bash
+# 使用第一块 NVIDIA GPU（默认自动选择）
+python rtsp_track.py --device 0
+
+# 多 GPU（GPU 0 和 GPU 1）
+python rtsp_track.py --device 0,1
+
+# 强制使用 CPU（调试时有用）
+python rtsp_track.py --device cpu
+
+# Apple Silicon（MPS，自动检测，也可手动指定）
+python rtsp_track.py --device mps
+```
+
+启动时日志会显示当前使用的设备，例如：
+
+```
+[INFO] CUDA available   : NVIDIA GeForce RTX 3080 – using GPU 0
+```
+
+---
+
 ## 快速开始
 
 > **安全提示**：避免将 RTSP 凭据硬编码在命令行历史中。
@@ -72,7 +131,7 @@ python rtsp_track.py --output-rtsp rtsp://localhost:8554/live/output
 | `--output-rtsp` | `rtsp://localhost:8554/live/tracking` | 注释流输出的 RTSP 地址 |
 | `--conf` | `0.3` | 检测置信度阈值 |
 | `--iou` | `0.5` | NMS IoU 阈值 |
-| `--device` | 自动 | 推理设备（`cpu`、`0` 表示 GPU 0 等） |
+| `--device` | 自动 | 推理设备（`cpu`、`0` 表示 GPU 0、`0,1` 多 GPU、`mps` 表示 Apple Silicon）；省略时自动选择 CUDA GPU，否则 CPU |
 | `--no-show` | — | 禁用本地显示窗口 |
 | `--no-output` | — | 禁用 RTSP 输出流 |
 

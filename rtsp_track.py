@@ -16,6 +16,7 @@ import subprocess
 import time
 
 import cv2
+import torch
 from ultralytics import YOLO
 
 # Override the input source via the RTSP_SOURCE environment variable to avoid
@@ -110,8 +111,12 @@ def main():
     )
     parser.add_argument(
         "--device",
-        default="",
-        help="Inference device: 'cpu', '0' (GPU 0), etc. Empty = auto-detect.",
+        default=None,
+        help=(
+            "Inference device: 'cpu', '0' (first CUDA GPU), '0,1' (multi-GPU), "
+            "'mps' (Apple Silicon). "
+            "Omit to auto-select: CUDA GPU if available, otherwise CPU."
+        ),
     )
     parser.add_argument(
         "--no-show",
@@ -127,6 +132,27 @@ def main():
 
     show = not args.no_show
     push_output = not args.no_output
+
+    # ------------------------------------------------------------------
+    # Resolve inference device
+    # ------------------------------------------------------------------
+    device = args.device
+    if device is None:
+        if torch.cuda.is_available():
+            device = "0"
+            try:
+                gpu_name = torch.cuda.get_device_name(0)
+            except Exception:
+                gpu_name = "unknown"
+            print(f"[INFO] CUDA available   : {gpu_name} – using GPU 0")
+        elif torch.backends.mps.is_available():
+            device = "mps"
+            print("[INFO] MPS available    : using Apple Silicon GPU")
+        else:
+            device = "cpu"
+            print("[INFO] No GPU detected  : using CPU (set --device 0 to force CUDA)")
+    else:
+        print(f"[INFO] Device (manual)  : {device}")
 
     # ------------------------------------------------------------------
     # Load YOLO11 model
@@ -186,7 +212,7 @@ def main():
             stream=True,                # memory-efficient generator
             conf=args.conf,
             iou=args.iou,
-            device=args.device if args.device else None,
+            device=device,
             verbose=False,
         )
 
