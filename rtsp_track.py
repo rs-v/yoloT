@@ -204,6 +204,7 @@ def main():
     #   iou      – NMS IoU overlap threshold
     # ------------------------------------------------------------------
     print("[INFO] Starting tracking. Press 'q' in the display window to quit.")
+    results = None
     try:
         results = model.track(
             source=args.source,
@@ -233,11 +234,27 @@ def main():
                     ffmpeg_proc.stdin.write(annotated_frame.tobytes())
                 except BrokenPipeError:
                     print("[WARN] FFmpeg pipe closed – output stream stopped.")
+                    try:
+                        ffmpeg_proc.stdin.close()
+                    except Exception:
+                        pass
+                    ffmpeg_proc.wait()
                     ffmpeg_proc = None
+                    if not show:
+                        break
 
     except KeyboardInterrupt:
         print("[INFO] Interrupted by user.")
     finally:
+        # Explicitly close the generator so the YOLO/OpenCV background thread
+        # is torn down in a controlled manner before the interpreter exits.
+        # Without this, Python's GC closes it at an arbitrary point and the
+        # C++ runtime raises "terminate called without an active exception".
+        if results is not None:
+            try:
+                results.close()
+            except Exception:
+                pass
         if show:
             cv2.destroyAllWindows()
         if ffmpeg_proc is not None:
