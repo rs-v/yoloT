@@ -1,0 +1,3 @@
+# Core dependencies
+ultralytics>=8.3.0   # YOLO11 support (yolo11n.pt, etc.)
+opencv-python>=4.8.0 # video capture, display, and frame rendering
