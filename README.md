@@ -84,6 +84,82 @@ python rtsp_track.py --device mps
 
 ---
 
+## NVIDIA Jetson 上使用 CUDA（Jetson Orin / Xavier / Nano）
+
+Jetson 设备运行 **ARM64（aarch64）** 架构，pytorch.org 提供的标准 x86 轮子**无法在 Jetson 上使用**。
+CUDA 已作为 JetPack 的一部分预装，只需安装与 JetPack 版本匹配的 PyTorch ARM64 轮子即可。
+
+### 第一步：确认 JetPack 版本
+
+```bash
+cat /etc/nv_tegra_release
+# 或
+dpkg -l | grep jetpack
+```
+
+### 第二步：安装 Jetson 专用 PyTorch（在安装 ultralytics 之前）
+
+**JetPack 6.x（Jetson Orin，CUDA 12.x）**
+
+```bash
+# 从 NVIDIA NGC 安装 Jetson 专用 PyTorch ARM64 轮子
+# 请先确认您的 JetPack 6.x 小版本，并查阅 NVIDIA 文档确认兼容的 PyTorch 版本：
+# https://developer.nvidia.com/embedded/jetpack
+pip install torch torchvision --index-url https://pypi.ngc.nvidia.com
+pip install -r requirements.txt
+```
+
+**JetPack 5.x（CUDA 11.x）**
+
+从 NVIDIA 开发者官网下载对应版本的 ARM64 轮子：
+
+```bash
+# 示例（请根据 JetPack 5.x 的具体小版本和 Python 版本替换文件名）
+# 文件名格式示例：torch-2.1.0a0+41361538.nv23.06-cp38-cp38-linux_aarch64.whl
+# 下载地址：https://developer.download.nvidia.com/compute/redist/jp/
+pip install torch-2.x.x-cpXX-cpXX-linux_aarch64.whl
+pip install -r requirements.txt
+```
+
+### 第三步：验证 CUDA 在 Jetson 上可用
+
+```bash
+python -c "
+import torch
+available = torch.cuda.is_available()
+name = torch.cuda.get_device_name(0) if available and torch.cuda.device_count() > 0 else 'N/A'
+print('CUDA available:', available, '|', name)
+"
+```
+
+正常输出示例（Jetson Orin）：
+
+```
+CUDA available: True | Orin
+```
+
+### 第四步：运行脚本
+
+CUDA 可用后，脚本启动时会自动检测并使用 GPU：
+
+```bash
+python rtsp_track.py
+# [INFO] CUDA available   : Orin – using GPU 0
+```
+
+也可手动指定：
+
+```bash
+python rtsp_track.py --device 0
+```
+
+> **注意**：若 `torch.cuda.is_available()` 返回 `False`，请检查：
+> - 是否安装的是 Jetson 专用轮子（而非 x86 版本）
+> - JetPack 与 PyTorch 轮子版本是否匹配
+> - 运行 `nvcc --version` 确认 CUDA 工具链已安装
+
+---
+
 ## 快速开始
 
 > **安全提示**：避免将 RTSP 凭据硬编码在命令行历史中。

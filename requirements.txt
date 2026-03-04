@@ -9,3 +9,17 @@ opencv-python>=4.8.0 # video capture, display, and frame rendering
 #
 # Replace 'cu121' with your CUDA version (cu118, cu121, cu124, ...).
 # See https://pytorch.org/get-started/locally/ for the correct command.
+#
+# ── NVIDIA Jetson (Orin / Xavier / Nano, JetPack 5 or 6) ─────────────────────
+# Standard x86 wheels above do NOT work on Jetson (ARM64/aarch64).
+# Install the Jetson-specific PyTorch wheel BEFORE ultralytics:
+#
+#   JetPack 6.x (Jetson Orin, CUDA 12.x):
+#     pip install torch torchvision --index-url https://pypi.ngc.nvidia.com
+#
+#   JetPack 5.x (CUDA 11.x) – download the matching ARM64 wheel from:
+#     https://developer.download.nvidia.com/compute/redist/jp/
+#     Wheel filename pattern: torch-2.x.x-cpXX-cpXX-linux_aarch64.whl
+#     e.g. pip install torch-2.1.0a0+41361538.nv23.06-cp38-cp38-linux_aarch64.whl
+#
+# See the "NVIDIA Jetson" section in README.md for full setup instructions.
