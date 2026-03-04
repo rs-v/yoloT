@@ -24,9 +24,9 @@ from ultralytics import YOLO
 #   export RTSP_SOURCE="rtsp://user:password@host:554/stream"
 DEFAULT_SOURCE = os.environ.get(
     "RTSP_SOURCE",
-    "rtsp://user:0000@192.168.144.108:554/cam/realmonitor?channel=1&subtype=1",
+    "rtsp://user:0000@192.168.144.108:554/cam/realmonitor?channel=1&subtype=0",
 )
-DEFAULT_MODEL = "yolo11n.pt"
+DEFAULT_MODEL = "best_640_s.pt"
 DEFAULT_TRACKER = "custom_tracker.yaml"   # or "botsort.yaml" / "bytetrack.yaml"
 DEFAULT_OUTPUT_RTSP = "rtsp://localhost:8554/live/tracking"
 
