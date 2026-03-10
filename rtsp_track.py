@@ -17,6 +17,7 @@ import time
 
 import cv2
 import torch
+import yaml
 from ultralytics import YOLO
 
 # Override the input source via the RTSP_SOURCE environment variable to avoid
@@ -29,6 +30,23 @@ DEFAULT_SOURCE = os.environ.get(
 DEFAULT_MODEL = "best_640_s.pt"
 DEFAULT_TRACKER = "custom_tracker.yaml"   # or "botsort.yaml" / "bytetrack.yaml"
 DEFAULT_OUTPUT_RTSP = "rtsp://localhost:8554/live/tracking"
+DEFAULT_NAMES = "zh_names.yaml"
+
+# Candidate CJK-capable font paths (searched in order on Linux/macOS systems).
+# Install one of the corresponding packages to enable Chinese label rendering,
+# e.g. on Ubuntu/Debian:  sudo apt-get install fonts-wqy-microhei
+_CJK_FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttf",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/arphic/uming.ttc",
+    "/usr/share/fonts/truetype/arphic/ukai.ttc",
+    # macOS
+    "/System/Library/Fonts/PingFang.ttc",
+    "/Library/Fonts/Arial Unicode.ttf",
+]
 
 # FPS sanity-check bounds: treat any value outside [1, MAX_REASONABLE_FPS] as
 # unreliable and fall back to FALLBACK_FPS (common IP-camera default).
@@ -57,6 +75,33 @@ def build_ffmpeg_push_cmd(width: int, height: int, fps: float, output_rtsp: str)
         "-rtsp_transport", "tcp",
         output_rtsp,
     ]
+
+
+def find_cjk_font():
+    """Return the path of the first available CJK-capable font, or None."""
+    for path in _CJK_FONT_CANDIDATES:
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def load_names_map(path: str) -> dict:
+    """Load a YAML file mapping original class names to Chinese display names."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = yaml.safe_load(fh)
+    except OSError as exc:
+        raise OSError(f"Cannot read names file '{path}': {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Names file '{path}' must be a YAML mapping, got {type(data).__name__}."
+        )
+    return {str(k): str(v) for k, v in data.items() if k is not None and v is not None}
+
+
+def apply_names_map(model_names: dict, name_map: dict) -> dict:
+    """Return a copy of *model_names* with values replaced according to *name_map*."""
+    return {idx: name_map.get(name, name) for idx, name in model_names.items()}
 
 
 def open_capture(source: str, retries: int = 5, delay: float = 2.0) -> cv2.VideoCapture:
@@ -135,6 +180,23 @@ def main():
         action="store_true",
         help="Disable the RTSP output stream.",
     )
+    parser.add_argument(
+        "--names",
+        default=DEFAULT_NAMES,
+        help=(
+            "YAML file mapping model class names (pinyin/English) to Chinese display names. "
+            "Loaded automatically if the file exists; ignored silently if it does not."
+        ),
+    )
+    parser.add_argument(
+        "--font",
+        default=None,
+        help=(
+            "Path to a TrueType font file used for label rendering. "
+            "Must support CJK characters when Chinese names are in use. "
+            "Auto-detected from common system font locations when not specified."
+        ),
+    )
     args = parser.parse_args()
 
     show = not args.no_show
@@ -169,6 +231,31 @@ def main():
     print(f"[INFO] Loading model  : {args.model}")
     print(f"[INFO] Tracker config : {args.tracker}")
     model = YOLO(args.model)
+
+    # ------------------------------------------------------------------
+    # Apply Chinese class-name mapping (pinyin → Chinese characters)
+    # ------------------------------------------------------------------
+    plot_kwargs: dict = {}
+    if args.names and os.path.isfile(args.names):
+        name_map = load_names_map(args.names)
+        model.names = apply_names_map(model.names, name_map)
+        print(f"[INFO] Names file     : {args.names} ({len(name_map)} entries)")
+
+        # PIL rendering is required for Unicode (Chinese) label text.
+        # Detect a CJK-capable font automatically when none is specified.
+        font_path = args.font or find_cjk_font()
+        if font_path:
+            print(f"[INFO] CJK font       : {font_path}")
+            plot_kwargs["font"] = font_path
+        else:
+            print(
+                "[WARN] No CJK font found – Chinese labels may not render correctly. "
+                "Install fonts-wqy-microhei (Ubuntu/Debian) or specify --font."
+            )
+        plot_kwargs["pil"] = True
+    elif args.font:
+        plot_kwargs["font"] = args.font
+        plot_kwargs["pil"] = True
 
     # ------------------------------------------------------------------
     # Probe the input stream for frame dimensions and FPS
@@ -235,7 +322,7 @@ def main():
 
         for result in results:
             # Render bounding boxes, class labels, and track IDs on the frame
-            annotated_frame = result.plot()
+            annotated_frame = result.plot(**plot_kwargs)
 
             # ---- Local display window ----
             if show:
