@@ -224,11 +224,13 @@ python rtsp_track.py --output-rtsp rtsp://localhost:8554/live/output
 编辑 `zh_names.yaml`，将左侧的键替换为**模型实际使用的类别名**，右侧填写希望在画面上显示的中文名称：
 
 ```yaml
-person: 人
-xingren: 行人
-car: 小汽车
-jidongche: 机动车
-feijidongche: 非机动车
+quepian: 缺片
+wushan: 污闪
+posun: 破损
+junyahuan_defect: 均压环缺陷
+kaikouxiao_queshi: 开口销缺失
+xiushi: 锈蚀
+kaikouxiao_defect: 开口销缺陷
 ```
 
 ### 安装 CJK 字体

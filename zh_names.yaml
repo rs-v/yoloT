@@ -11,19 +11,11 @@
 # Replace the keys (left) with the actual class names your model uses,
 # and the values (right) with the Chinese labels to display on the video.
 
-# 常见示例 / Common examples:
-person: 人
-pedestrian: 行人
-xingren: 行人
-car: 小汽车
-truck: 卡车
-bus: 公交车
-motorcycle: 摩托车
-bicycle: 自行车
-motorbike: 摩托车
-jidongche: 机动车
-feijidongche: 非机动车
-vehicle: 车辆
-dog: 狗
-cat: 猫
-bird: 鸟
+# best_640_s.pt 模型类别 / best_640_s.pt model classes:
+quepian: 缺片
+wushan: 污闪
+posun: 破损
+junyahuan_defect: 均压环缺陷
+kaikouxiao_queshi: 开口销缺失
+xiushi: 锈蚀
+kaikouxiao_defect: 开口销缺陷
