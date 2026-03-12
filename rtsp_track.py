@@ -238,7 +238,13 @@ def main():
     plot_kwargs: dict = {}
     if args.names and os.path.isfile(args.names):
         name_map = load_names_map(args.names)
-        model.names = apply_names_map(model.names, name_map)
+        new_names = apply_names_map(model.names, name_map)
+        # model.names is a read-only property in some ultralytics/PyTorch
+        # versions (no setter).  Fall back to the inner nn.Module when needed.
+        try:
+            model.names = new_names
+        except AttributeError:
+            model.model.names = new_names
         print(f"[INFO] Names file     : {args.names} ({len(name_map)} entries)")
 
         # PIL rendering is required for Unicode (Chinese) label text.
