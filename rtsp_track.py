@@ -288,15 +288,30 @@ def main():
     # Apply Chinese class-name mapping (pinyin → Chinese characters)
     # ------------------------------------------------------------------
     plot_kwargs: dict = {}
+    override_names = None  # set when model-level name assignment fails
     if args.names and os.path.isfile(args.names):
         name_map = load_names_map(args.names)
         new_names = apply_names_map(model.names, name_map)
         # model.names is a read-only property in some ultralytics/PyTorch
-        # versions (no setter).  Fall back to the inner nn.Module when needed.
+        # versions (no setter).  Try progressively deeper attributes and, as a
+        # last resort for TensorRT engine files, patch each result in the loop.
+        names_set = False
         try:
             model.names = new_names
+            names_set = True
         except AttributeError:
-            model.model.names = new_names
+            pass
+        if not names_set:
+            try:
+                model.model.names = new_names
+                names_set = True
+            except AttributeError:
+                pass
+        if not names_set:
+            # TensorRT engines may expose names only on the Results objects
+            # produced during inference.  Store the mapping and apply it
+            # per-frame inside the tracking loop below.
+            override_names = new_names
         print(f"[INFO] Names file     : {args.names} ({len(name_map)} entries)")
 
         # PIL rendering is required for Unicode (Chinese) label text.
@@ -380,6 +395,10 @@ def main():
         )
 
         for result in results:
+            # For TensorRT engines the name mapping couldn't be injected into
+            # the model directly; apply it to each result object instead.
+            if override_names is not None:
+                result.names = override_names
             # Render bounding boxes, class labels, and track IDs on the frame
             annotated_frame = result.plot(**plot_kwargs)
 
