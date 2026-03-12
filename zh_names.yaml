@@ -1,0 +1,21 @@
+# 目标类别中文名称映射 / Chinese class name mapping
+#
+# 格式：<模型中的拼音或英文类别名>: <显示用中文名>
+# Format: <pinyin or English class name in model>: <Chinese display name>
+#
+# 使用方法 / Usage:
+#   python rtsp_track.py --names zh_names.yaml
+#
+# 将此文件中的键（左侧）替换为您的模型实际使用的类别名称，
+# 将值（右侧）替换为希望在视频画面上显示的中文名称。
+# Replace the keys (left) with the actual class names your model uses,
+# and the values (right) with the Chinese labels to display on the video.
+
+# best_640_s.pt 模型类别 / best_640_s.pt model classes:
+quepian: 缺片
+wushan: 污闪
+posun: 破损
+junyahuan_defect: 均压环缺陷
+kaikouxiao_queshi: 开口销缺失
+xiushi: 锈蚀
+kaikouxiao_defect: 开口销缺陷

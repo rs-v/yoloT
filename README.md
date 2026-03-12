@@ -210,6 +210,48 @@ python rtsp_track.py --output-rtsp rtsp://localhost:8554/live/output
 | `--device` | 自动 | 推理设备（`cpu`、`0` 表示 GPU 0、`0,1` 多 GPU、`mps` 表示 Apple Silicon）；省略时自动选择 CUDA GPU，否则 CPU |
 | `--no-show` | — | 禁用本地显示窗口 |
 | `--no-output` | — | 禁用 RTSP 输出流 |
+| `--names` | `zh_names.yaml` | YAML 映射文件（拼音/英文类别名 → 中文显示名）；文件存在时自动加载 |
+| `--font` | 自动检测 | TrueType 字体文件路径；显示中文名时需支持 CJK 字符（未指定时自动在系统常见位置查找） |
+
+---
+
+## 目标框中文标注
+
+脚本默认加载 [`zh_names.yaml`](zh_names.yaml)，将模型中的拼音或英文类别名替换为中文显示名，使视频画面上的目标框标签显示为中文。
+
+### 配置中文名称
+
+编辑 `zh_names.yaml`，将左侧的键替换为**模型实际使用的类别名**，右侧填写希望在画面上显示的中文名称：
+
+```yaml
+quepian: 缺片
+wushan: 污闪
+posun: 破损
+junyahuan_defect: 均压环缺陷
+kaikouxiao_queshi: 开口销缺失
+xiushi: 锈蚀
+kaikouxiao_defect: 开口销缺陷
+```
+
+### 安装 CJK 字体
+
+显示中文标签需要支持 CJK 字符的字体。脚本会自动在系统常见路径中查找，也可通过 `--font` 手动指定：
+
+```bash
+# Ubuntu/Debian – 安装文泉驿微米黑字体
+sudo apt-get install fonts-wqy-microhei
+
+# 或手动指定字体路径
+python rtsp_track.py --font /path/to/your/cjk-font.ttf
+```
+
+### 禁用中文标注
+
+若不需要中文名称映射，可通过 `--names ""` 跳过名称文件加载：
+
+```bash
+python rtsp_track.py --names ""
+```
 
 ---
 
