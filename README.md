@@ -210,6 +210,8 @@ python rtsp_track.py --output-rtsp rtsp://localhost:8554/live/output
 | `--device` | 自动 | 推理设备（`cpu`、`0` 表示 GPU 0、`0,1` 多 GPU、`mps` 表示 Apple Silicon）；省略时自动选择 CUDA GPU，否则 CPU |
 | `--no-show` | — | 禁用本地显示窗口 |
 | `--no-output` | — | 禁用 RTSP 输出流 |
+| `--crf` | `28` | 输出流的 libx264 恒定码率因子（0–51）。值越小画质越高、码率越大；值越大压缩率越高、码率越小。28 是流媒体场景的良好折中点，23 为 libx264 默认值 |
+| `--preset` | `ultrafast` | 输出流的 libx264 编码速度预设（`ultrafast` / `superfast` / `veryfast` / `faster` / `fast` / `medium` / `slow` / `slower` / `veryslow`）。更快的预设延迟低但压缩率较低；更慢的预设压缩率更高但 CPU 占用更大 |
 | `--names` | `zh_names.yaml` | YAML 映射文件（拼音/英文类别名 → 中文显示名）；文件存在时自动加载 |
 | `--font` | 自动检测 | TrueType 字体文件路径；显示中文名时需支持 CJK 字符（未指定时自动在系统常见位置查找） |
 

@@ -63,8 +63,30 @@ FALLBACK_FPS = 25.0
 WINDOW_NAME = "YOLO11 RTSP Tracking"
 
 
-def build_ffmpeg_push_cmd(width: int, height: int, fps: float, output_rtsp: str) -> list:
-    """Return the FFmpeg command list that pushes raw BGR frames to an RTSP server."""
+def build_ffmpeg_push_cmd(
+    width: int,
+    height: int,
+    fps: float,
+    output_rtsp: str,
+    crf: int = 28,
+    preset: str = "ultrafast",
+) -> list:
+    """Return the FFmpeg command list that pushes raw BGR frames to an RTSP server.
+
+    Args:
+        width: Frame width in pixels.
+        height: Frame height in pixels.
+        fps: Frame rate.
+        output_rtsp: Destination RTSP URL.
+        crf: libx264 Constant Rate Factor (0–51).  Lower = higher quality /
+             larger bitrate; higher = more compression / smaller bitrate.
+             28 is a good starting point for noticeably smaller streams while
+             keeping acceptable quality.  Use 23 to match the libx264 default.
+        preset: libx264 encoding speed preset.  Faster presets (e.g.
+                ``ultrafast``) have lower latency but produce larger files;
+                slower presets (e.g. ``veryfast``, ``fast``) compress better
+                at the cost of more CPU.
+    """
     return [
         "ffmpeg",
         "-y",
@@ -76,8 +98,9 @@ def build_ffmpeg_push_cmd(width: int, height: int, fps: float, output_rtsp: str)
         "-i", "pipe:0",
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
-        "-preset", "ultrafast",
+        "-preset", preset,
         "-tune", "zerolatency",
+        "-crf", str(crf),
         "-f", "rtsp",
         "-rtsp_transport", "tcp",
         output_rtsp,
@@ -204,6 +227,28 @@ def main():
             "Auto-detected from common system font locations when not specified."
         ),
     )
+    parser.add_argument(
+        "--crf",
+        type=int,
+        default=28,
+        metavar="N",
+        help=(
+            "libx264 Constant Rate Factor for the output stream (0–51). "
+            "Lower values produce higher quality at larger bitrates; "
+            "higher values compress more aggressively at lower quality. "
+            "28 is a good balance for streaming; use 23 to match the libx264 default."
+        ),
+    )
+    parser.add_argument(
+        "--preset",
+        default="ultrafast",
+        choices=["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"],
+        help=(
+            "libx264 encoding speed preset for the output stream. "
+            "Faster presets reduce CPU load and latency but compress less; "
+            "slower presets improve compression at the cost of more CPU."
+        ),
+    )
     args = parser.parse_args()
 
     show = not args.no_show
@@ -288,8 +333,9 @@ def main():
     # ------------------------------------------------------------------
     ffmpeg_proc = None
     if push_output:
-        cmd = build_ffmpeg_push_cmd(width, height, fps, args.output_rtsp)
+        cmd = build_ffmpeg_push_cmd(width, height, fps, args.output_rtsp, crf=args.crf, preset=args.preset)
         print(f"[INFO] Output RTSP    : {args.output_rtsp}")
+        print(f"[INFO] Video CRF      : {args.crf}  (preset: {args.preset})")
         try:
             ffmpeg_proc = subprocess.Popen(
                 cmd,
