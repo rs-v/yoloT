@@ -16,6 +16,7 @@ import subprocess
 import time
 
 import cv2
+import numpy as np
 import torch
 import yaml
 from ultralytics import YOLO
@@ -335,6 +336,11 @@ def main():
         for result in results:
             # Render bounding boxes, class labels, and track IDs on the frame
             annotated_frame = result.plot(**plot_kwargs)
+
+            # result.plot(pil=True) returns a PIL Image (RGB); convert to a
+            # BGR numpy array so cv2.imshow() and the FFmpeg pipe work correctly.
+            if not isinstance(annotated_frame, np.ndarray):
+                annotated_frame = cv2.cvtColor(np.array(annotated_frame), cv2.COLOR_RGB2BGR)
 
             # ---- Local display window ----
             if show:
