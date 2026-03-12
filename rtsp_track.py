@@ -35,7 +35,13 @@ DEFAULT_NAMES = "zh_names.yaml"
 # Candidate CJK-capable font paths (searched in order on Linux/macOS systems).
 # Install one of the corresponding packages to enable Chinese label rendering,
 # e.g. on Ubuntu/Debian:  sudo apt-get install fonts-wqy-microhei
+#
+# The ultralytics library downloads Arial.Unicode.ttf to its config directory
+# on first use.  We list that cached copy first so that subsequent runs can
+# reuse it without triggering another network download.
 _CJK_FONT_CANDIDATES = [
+    # Ultralytics cached font (downloaded automatically on first PIL render)
+    os.path.expanduser("~/.config/Ultralytics/Arial.Unicode.ttf"),
     "/usr/share/fonts/truetype/wqy/wqy-microhei.ttf",
     "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -354,6 +360,9 @@ def main():
 
     except KeyboardInterrupt:
         print("[INFO] Interrupted by user.")
+    except Exception as exc:
+        print(f"[ERROR] Unexpected error: {exc}")
+        raise
     finally:
         # Explicitly close the generator so the YOLO/OpenCV background thread
         # is torn down in a controlled manner before the interpreter exits.
