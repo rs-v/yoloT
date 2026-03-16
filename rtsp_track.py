@@ -8,11 +8,18 @@ Features:
     (botsort / bytetrack, or a custom YAML – see custom_tracker.yaml)
   - Displays annotated frames in a local window
   - Re-streams annotated frames to an RTSP output via FFmpeg
+  - Saves annotated frames to disk whenever objects are detected
+  - Serves a web dashboard (HTTP) showing the latest detection image and text descriptions
 """
 
 import argparse
+import datetime
+import http.server
+import json
 import os
+import socketserver
 import subprocess
+import threading
 import time
 
 import cv2
@@ -61,6 +68,158 @@ MAX_REASONABLE_FPS = 120
 FALLBACK_FPS = 25.0
 
 WINDOW_NAME = "YOLO11 RTSP Tracking"
+
+# ---------------------------------------------------------------------------
+# Global state shared between the tracking loop and the web server thread
+# ---------------------------------------------------------------------------
+_web_state: dict = {
+    "lock": threading.Lock(),
+    "latest_frame": None,       # bytes – JPEG-encoded annotated frame
+    "latest_detections": [],    # list of {"name": str, "confidence": float}
+    "latest_timestamp": None,   # ISO-8601 string
+    "detection_count": 0,       # total detection events since start
+}
+
+_WEB_PAGE_TEMPLATE = """\
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>YOLO11 目标检测监控</title>
+  <style>
+    body{{font-family:Arial,"Microsoft YaHei",sans-serif;margin:0;background:#1a1a2e;color:#eee}}
+    header{{background:#16213e;padding:16px 24px;display:flex;align-items:center;gap:12px}}
+    header h1{{margin:0;font-size:1.4rem;color:#e94560}}
+    .badge{{background:#0f3460;border-radius:12px;padding:4px 12px;font-size:.85rem}}
+    .container{{display:flex;flex-wrap:wrap;gap:16px;padding:20px}}
+    .card{{background:#16213e;border-radius:10px;padding:16px;flex:1;min-width:280px}}
+    .card h2{{margin:0 0 12px;font-size:1rem;color:#e94560;border-bottom:1px solid #0f3460;padding-bottom:8px}}
+    .frame-img{{width:100%;border-radius:6px;display:block}}
+    .det-list{{list-style:none;margin:0;padding:0}}
+    .det-list li{{display:flex;justify-content:space-between;align-items:center;
+                  padding:8px 10px;margin-bottom:6px;background:#0f3460;border-radius:6px}}
+    .det-name{{font-weight:bold;font-size:1rem}}
+    .det-conf{{background:#e94560;border-radius:10px;padding:2px 10px;font-size:.8rem}}
+    .no-det{{color:#888;font-style:italic}}
+    .meta{{font-size:.8rem;color:#888;margin-top:10px}}
+    .refresh-note{{text-align:center;padding:10px;color:#555;font-size:.8rem}}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>&#128247; YOLO11 目标检测监控</h1>
+    <span class="badge">检测事件：{detection_count}</span>
+    <span class="badge">{timestamp_label}</span>
+  </header>
+  <div class="container">
+    <div class="card" style="flex:2;min-width:360px">
+      <h2>最新检测帧</h2>
+      {img_tag}
+      <p class="meta">检测时间：{timestamp}</p>
+    </div>
+    <div class="card">
+      <h2>识别结果</h2>
+      {det_html}
+    </div>
+  </div>
+  <p class="refresh-note">页面每 2 秒自动刷新</p>
+  <script>setTimeout(()=>location.reload(),2000);</script>
+</body>
+</html>
+"""
+
+
+def _build_html() -> bytes:
+    """Render the dashboard HTML from current *_web_state*."""
+    with _web_state["lock"]:
+        frame_available = _web_state["latest_frame"] is not None
+        detections = list(_web_state["latest_detections"])
+        ts = _web_state["latest_timestamp"] or "—"
+        count = _web_state["detection_count"]
+
+    img_tag = (
+        '<img class="frame-img" src="/latest.jpg" alt="最新检测帧">'
+        if frame_available
+        else '<p class="no-det">暂无检测帧</p>'
+    )
+    if detections:
+        items = "".join(
+            f'<li><span class="det-name">{d["name"]}</span>'
+            f'<span class="det-conf">{d["confidence"]:.1%}</span></li>'
+            for d in detections
+        )
+        det_html = f'<ul class="det-list">{items}</ul>'
+    else:
+        det_html = '<p class="no-det">等待检测结果…</p>'
+
+    ts_label = ts[:19].replace("T", " ") if ts != "—" else "—"
+    html = _WEB_PAGE_TEMPLATE.format(
+        detection_count=count,
+        timestamp_label=ts_label,
+        timestamp=ts,
+        img_tag=img_tag,
+        det_html=det_html,
+    )
+    return html.encode("utf-8")
+
+
+class _DetectionHandler(http.server.BaseHTTPRequestHandler):
+    """Minimal HTTP handler serving the detection dashboard."""
+
+    def log_message(self, fmt, *args):  # suppress per-request console noise
+        pass
+
+    def do_GET(self):
+        if self.path in ("/", "/index.html"):
+            body = _build_html()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        elif self.path.startswith("/latest.jpg"):
+            with _web_state["lock"]:
+                frame_bytes = _web_state["latest_frame"]
+            if frame_bytes is None:
+                self.send_error(404, "No detection frame available yet")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(frame_bytes)))
+            self.send_header("Cache-Control", "no-cache, no-store")
+            self.end_headers()
+            self.wfile.write(frame_bytes)
+
+        elif self.path.startswith("/api/detections"):
+            with _web_state["lock"]:
+                data = {
+                    "detections": _web_state["latest_detections"],
+                    "timestamp": _web_state["latest_timestamp"],
+                    "detection_count": _web_state["detection_count"],
+                }
+            body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        else:
+            self.send_error(404)
+
+
+def start_web_server(port: int) -> socketserver.TCPServer:
+    """Start the detection web dashboard in a background daemon thread.
+
+    Returns the *TCPServer* instance (call ``server.shutdown()`` to stop it).
+    """
+    socketserver.TCPServer.allow_reuse_address = True
+    server = socketserver.TCPServer(("", port), _DetectionHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server
 
 
 def build_ffmpeg_push_cmd(
@@ -249,11 +408,38 @@ def main():
             "slower presets improve compression at the cost of more CPU."
         ),
     )
+    parser.add_argument(
+        "--no-web",
+        action="store_true",
+        help="Disable the web dashboard (default: enabled on --web-port).",
+    )
+    parser.add_argument(
+        "--web-port",
+        type=int,
+        default=8080,
+        metavar="PORT",
+        help="Port for the HTTP detection dashboard.",
+    )
+    parser.add_argument(
+        "--save-dir",
+        default="saved_frames",
+        metavar="DIR",
+        help=(
+            "Directory for saving annotated frames when objects are detected. "
+            "Set to empty string ('') to disable frame saving."
+        ),
+    )
     args = parser.parse_args()
 
     show = not args.no_show
     push_output = not args.no_output
     fullscreen = args.fullscreen
+    enable_web = not args.no_web
+    save_dir = args.save_dir.strip() if args.save_dir else ""
+
+    # Create the save directory early so the web server can mention its path.
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
 
     # ------------------------------------------------------------------
     # Resolve inference device
@@ -344,6 +530,18 @@ def main():
     print(f"[INFO] Stream info    : {width}x{height} @ {fps:.1f} fps")
 
     # ------------------------------------------------------------------
+    # Start HTTP detection dashboard (optional)
+    # ------------------------------------------------------------------
+    web_server = None
+    if enable_web:
+        try:
+            web_server = start_web_server(args.web_port)
+            print(f"[INFO] Web dashboard  : http://localhost:{args.web_port}/")
+        except OSError as exc:
+            print(f"[WARN] Cannot start web server on port {args.web_port}: {exc}")
+            web_server = None
+
+    # ------------------------------------------------------------------
     # Start FFmpeg RTSP push process (optional)
     # ------------------------------------------------------------------
     ffmpeg_proc = None
@@ -407,6 +605,36 @@ def main():
             if not isinstance(annotated_frame, np.ndarray):
                 annotated_frame = cv2.cvtColor(np.array(annotated_frame), cv2.COLOR_RGB2BGR)
 
+            # ---- Save frame and update web state when objects are detected ----
+            if result.boxes is not None and len(result.boxes) > 0:
+                names_map = result.names or {}
+                detections = [
+                    {
+                        "name": names_map.get(int(box.cls[0]), str(int(box.cls[0]))),
+                        "confidence": float(box.conf[0]),
+                    }
+                    for box in result.boxes
+                ]
+
+                ts = datetime.datetime.now(datetime.timezone.utc)
+                ts_str = ts.strftime("%Y%m%d_%H%M%S_%f")
+
+                # Save annotated frame to disk
+                if save_dir:
+                    img_path = os.path.join(save_dir, f"detection_{ts_str}.jpg")
+                    cv2.imwrite(img_path, annotated_frame)
+
+                # Encode frame as JPEG for the web server
+                if web_server is not None:
+                    ok, buf = cv2.imencode(".jpg", annotated_frame)
+                    if ok:
+                        frame_bytes = buf.tobytes()
+                        with _web_state["lock"]:
+                            _web_state["latest_frame"] = frame_bytes
+                            _web_state["latest_detections"] = detections
+                            _web_state["latest_timestamp"] = ts.isoformat()
+                            _web_state["detection_count"] += 1
+
             # ---- Local display window ----
             if show:
                 cv2.imshow(WINDOW_NAME, annotated_frame)
@@ -452,6 +680,8 @@ def main():
             except Exception:
                 pass
             ffmpeg_proc.wait()
+        if web_server is not None:
+            web_server.shutdown()
         print("[INFO] Done.")
 
 
