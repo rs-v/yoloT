@@ -3,6 +3,8 @@
 使用 **YOLO11** 对 RTSP 视频流进行目标跟踪，同时：
 - 在本地窗口**实时展示**带注释的画面
 - 通过 FFmpeg 将注释后的画面**推送为 RTSP 输出流**
+- 检测到目标时**自动保存标注帧**到本地目录
+- 提供**内置 Web 监控面板**，实时展示最新检测帧与识别结果文字说明
 
 参考文档：<https://docs.ultralytics.com/modes/track/>
 
@@ -214,6 +216,64 @@ python rtsp_track.py --output-rtsp rtsp://localhost:8554/live/output
 | `--preset` | `ultrafast` | 输出流的 libx264 编码速度预设（`ultrafast` / `superfast` / `veryfast` / `faster` / `fast` / `medium` / `slow` / `slower` / `veryslow`）。更快的预设延迟低但压缩率较低；更慢的预设压缩率更高但 CPU 占用更大 |
 | `--names` | `zh_names.yaml` | YAML 映射文件（拼音/英文类别名 → 中文显示名）；文件存在时自动加载 |
 | `--font` | 自动检测 | TrueType 字体文件路径；显示中文名时需支持 CJK 字符（未指定时自动在系统常见位置查找） |
+| `--no-web` | — | 禁用 Web 监控面板 |
+| `--web-port` | `8080` | Web 监控面板监听端口 |
+| `--save-dir` | `saved_frames` | 保存检测帧的目录；设为空字符串 `''` 可禁用帧保存 |
+
+---
+
+## 检测帧保存与 Web 监控面板
+
+### 自动保存检测帧
+
+每当 YOLO11 在当前帧中检测到至少一个目标时，脚本会自动将带有标注框和标签的帧保存为 JPEG 图片，文件名包含检测时间戳：
+
+```
+saved_frames/
+├── detection_20260316_024400_123456.jpg
+├── detection_20260316_024401_789012.jpg
+└── ...
+```
+
+通过 `--save-dir` 可自定义保存目录，设为空字符串可禁用保存：
+
+```bash
+# 自定义保存目录
+python rtsp_track.py --save-dir /data/detections
+
+# 禁用帧保存
+python rtsp_track.py --save-dir ""
+```
+
+### Web 监控面板
+
+脚本启动时默认在后台开启一个轻量 HTTP 服务，可在浏览器中实时查看最新检测结果：
+
+```
+http://localhost:8080/
+```
+
+面板内容（每 2 秒自动刷新）：
+- 📷 **最新检测帧**：含目标框和中文标签的标注图像
+- 📋 **识别结果列表**：每个目标的类别名称（中文）和置信度百分比
+- 🕐 **检测时间戳**和累计检测事件数
+
+此外还提供 JSON API，方便外部系统集成：
+
+```
+GET /api/detections   → {"detections":[{"name":"缺片","confidence":0.95}], "timestamp":"...", "detection_count":42}
+GET /latest.jpg       → 最新检测帧（JPEG）
+```
+
+通过 `--web-port` 可更改端口，`--no-web` 可完全禁用：
+
+```bash
+# 更改 Web 面板端口
+python rtsp_track.py --web-port 9090
+
+# 禁用 Web 面板
+python rtsp_track.py --no-web
+```
 
 ---
 
@@ -315,5 +375,9 @@ YOLO11 model.track(
     │
     ├──► result.plot()  ──► cv2.imshow()          本地显示
     │
-    └──► result.plot()  ──► FFmpeg stdin ──► RTSP 输出流
+    ├──► result.plot()  ──► FFmpeg stdin ──► RTSP 输出流
+    │
+    └──► 检测到目标时
+         ├── cv2.imwrite()  ──► saved_frames/      保存标注帧
+         └── JPEG 编码     ──► HTTP 服务           Web 监控面板
 ```
