@@ -731,64 +731,78 @@ def main():
                     for box in result.boxes
                 ]
 
-                # Only process detections with confidence above the save threshold
-                high_conf = [d for d in all_detections if d["confidence"] > save_conf_threshold]
+                # Only process detections that are both above the confidence
+                # threshold AND carry a tracking ID.  Detections without an ID
+                # (rid is None) are ignored entirely – they are neither saved to
+                # disk nor shown on the web panel.
+                high_conf = [
+                    d for d in all_detections
+                    if d["confidence"] > save_conf_threshold and d["rid"] is not None
+                ]
 
                 if high_conf:
-                    ts = datetime.datetime.now(datetime.timezone.utc)
-                    ts_str = ts.strftime("%Y%m%d_%H%M%S_%f")
-
-                    # Save annotated frame to disk only when the frame contains at
-                    # least one tracking ID that has not been saved before, so that
-                    # each unique tracked object is stored exactly once.
-                    all_rids = {d["rid"] for d in high_conf if d["rid"] is not None}
+                    # All entries in high_conf already have a valid rid (the
+                    # filter above guarantees rid is not None), so no extra
+                    # None-check is needed in the set comprehension.
+                    all_rids = {d["rid"] for d in high_conf}
                     new_rids = all_rids - saved_rids
-                    if save_dir and new_rids:
-                        img_path = os.path.join(save_dir, f"detection_{ts_str}.jpg")
-                        cv2.imwrite(img_path, annotated_frame)
+
+                    # Only act when at least one tracking ID is seen for the
+                    # first time.  This keeps disk save and web history fully
+                    # in sync: both record exactly one entry per unique rid.
+                    if new_rids:
+                        ts = datetime.datetime.now(datetime.timezone.utc)
+                        ts_str = ts.strftime("%Y%m%d_%H%M%S_%f")
+
+                        # Mark IDs as seen before any I/O so that both disk
+                        # and web operate on the same "new rid" condition.
                         saved_rids.update(new_rids)
 
-                    # Encode frame as JPEG for the web server
-                    if web_server is not None:
-                        ok, buf = cv2.imencode(".jpg", annotated_frame)
-                        if ok:
-                            frame_bytes = buf.tobytes()
-                            display_detections = [
-                                {"name": d["name"], "confidence": d["confidence"]}
-                                for d in high_conf
-                            ]
-                            # Append to frame history (deque auto-evicts oldest entry when
-                            # the capacity limit MAX_HISTORY_FRAMES is reached).
-                            # Each entry captures the annotated frame, the detected
-                            # objects, and the timestamp for the web gallery.
-                            with _web_state["lock"]:
-                                _web_state["frame_history"].append({
-                                    "frame": frame_bytes,
-                                    "detections": display_detections,
-                                    "timestamp": ts.isoformat(),
-                                })
-                                frame_idx = len(_web_state["frame_history"]) - 1
+                        # Save annotated frame to disk (one image per unique tracking ID).
+                        if save_dir:
+                            img_path = os.path.join(save_dir, f"detection_{ts_str}.jpg")
+                            cv2.imwrite(img_path, annotated_frame)
 
-                            # Accumulate unique detections by rid (one entry per unique track ID).
-                            # When the same rid appears multiple times in one frame, the last
-                            # entry wins – all originate from the same tracked object so any
-                            # is equivalent.  frame_idx links each defect to its detection photo.
-                            accumulated_update = {
-                                d["rid"]: {
-                                    "name": d["name"],
-                                    "confidence": d["confidence"],
-                                    "timestamp": ts.isoformat(),
-                                    "frame_idx": frame_idx,
+                        # Update web state (consistent with disk save: only on new rids).
+                        if web_server is not None:
+                            ok, buf = cv2.imencode(".jpg", annotated_frame)
+                            if ok:
+                                frame_bytes = buf.tobytes()
+                                display_detections = [
+                                    {"name": d["name"], "confidence": d["confidence"]}
+                                    for d in high_conf
+                                ]
+                                # Append to frame history (deque auto-evicts oldest entry
+                                # when the capacity limit MAX_HISTORY_FRAMES is reached).
+                                # Each entry captures the annotated frame, the detected
+                                # objects, and the timestamp for the web gallery.
+                                with _web_state["lock"]:
+                                    _web_state["frame_history"].append({
+                                        "frame": frame_bytes,
+                                        "detections": display_detections,
+                                        "timestamp": ts.isoformat(),
+                                    })
+                                    frame_idx = len(_web_state["frame_history"]) - 1
+
+                                # Accumulate unique detections by rid (one entry per
+                                # unique track ID).  frame_idx links each defect to its
+                                # detection photo.  All detections in high_conf already
+                                # have a valid rid, so no extra guard is needed here.
+                                accumulated_update = {
+                                    d["rid"]: {
+                                        "name": d["name"],
+                                        "confidence": d["confidence"],
+                                        "timestamp": ts.isoformat(),
+                                        "frame_idx": frame_idx,
+                                    }
+                                    for d in high_conf
                                 }
-                                for d in high_conf
-                                if d["rid"] is not None
-                            }
-                            with _web_state["lock"]:
-                                _web_state["latest_frame"] = frame_bytes
-                                _web_state["latest_detections"] = display_detections
-                                _web_state["latest_timestamp"] = ts.isoformat()
-                                _web_state["detection_count"] += 1
-                                _web_state["accumulated_detections"].update(accumulated_update)
+                                with _web_state["lock"]:
+                                    _web_state["latest_frame"] = frame_bytes
+                                    _web_state["latest_detections"] = display_detections
+                                    _web_state["latest_timestamp"] = ts.isoformat()
+                                    _web_state["detection_count"] += 1
+                                    _web_state["accumulated_detections"].update(accumulated_update)
 
             # ---- Local display window ----
             if show:
