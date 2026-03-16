@@ -13,10 +13,12 @@ Features:
 """
 
 import argparse
+import collections
 import datetime
 import http.server
 import json
 import os
+import re
 import socketserver
 import subprocess
 import threading
@@ -73,6 +75,9 @@ FALLBACK_FPS = 25.0
 
 WINDOW_NAME = "YOLO11 RTSP Tracking"
 
+# Maximum number of historical detection frames kept in memory for the web gallery.
+MAX_HISTORY_FRAMES = 50
+
 # ---------------------------------------------------------------------------
 # Global state shared between the tracking loop and the web server thread
 # ---------------------------------------------------------------------------
@@ -82,7 +87,8 @@ _web_state: dict = {
     "latest_detections": [],        # list of {"name": str, "confidence": float}
     "latest_timestamp": None,       # ISO-8601 string
     "detection_count": 0,           # total detection events since start
-    "accumulated_detections": {},   # rid(int) -> {"name": str, "confidence": float, "timestamp": str}
+    "accumulated_detections": {},   # rid(int) -> {"name": str, "confidence": float, "timestamp": str, "frame_idx": int}
+    "frame_history": collections.deque(maxlen=MAX_HISTORY_FRAMES),  # deque of {"frame": bytes, "detections": list, "timestamp": str}
 }
 
 _WEB_PAGE_TEMPLATE = """\
@@ -110,6 +116,15 @@ _WEB_PAGE_TEMPLATE = """\
     .no-det{{color:#888;font-style:italic}}
     .meta{{font-size:.8rem;color:#888;margin-top:10px}}
     .refresh-note{{text-align:center;padding:10px;color:#555;font-size:.8rem}}
+    .history-section{{padding:0 20px 20px}}
+    .history-section h2{{font-size:1rem;color:#e94560;border-bottom:1px solid #0f3460;padding-bottom:8px;margin-bottom:12px}}
+    .history-grid{{display:flex;flex-wrap:wrap;gap:12px}}
+    .history-item{{background:#16213e;border-radius:10px;padding:10px;width:220px;flex-shrink:0}}
+    .history-item img{{width:100%;border-radius:6px;display:block}}
+    .history-item .meta{{font-size:.75rem;color:#888;margin-top:6px}}
+    .history-item .det-tags{{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}}
+    .history-item .det-tag{{background:#0f3460;border-radius:10px;padding:2px 8px;font-size:.75rem}}
+    .history-empty{{color:#888;font-style:italic}}
   </style>
 </head>
 <body>
@@ -134,6 +149,10 @@ _WEB_PAGE_TEMPLATE = """\
       {accumulated_html}
     </div>
   </div>
+  <div class="history-section">
+    <h2>&#128247; 历史检测照片（最近 {history_count} 张）</h2>
+    {history_html}
+  </div>
   <p class="refresh-note">页面每 2 秒自动刷新</p>
   <script>setTimeout(()=>location.reload(),2000);</script>
 </body>
@@ -149,6 +168,7 @@ def _build_html() -> bytes:
         ts = _web_state["latest_timestamp"] or "—"
         count = _web_state["detection_count"]
         accumulated = dict(_web_state["accumulated_detections"])
+        history = list(_web_state["frame_history"])
 
     img_tag = (
         '<img class="frame-img" src="/latest.jpg" alt="最新检测帧">'
@@ -176,6 +196,26 @@ def _build_html() -> bytes:
     else:
         accumulated_html = '<p class="no-det">暂无累计数据…</p>'
 
+    if history:
+        hist_items = []
+        for hist_idx in range(len(history) - 1, -1, -1):
+            entry = history[hist_idx]
+            ts_label = entry["timestamp"][:19].replace("T", " ")
+            tags = "".join(
+                f'<span class="det-tag">{d["name"]} {d["confidence"]:.0%}</span>'
+                for d in entry["detections"]
+            )
+            hist_items.append(
+                f'<div class="history-item">'
+                f'<img src="/history/{hist_idx}.jpg" alt="历史检测帧 {hist_idx}" loading="lazy">'
+                f'<p class="meta">{ts_label}</p>'
+                f'<div class="det-tags">{tags}</div>'
+                f'</div>'
+            )
+        history_html = f'<div class="history-grid">{"".join(hist_items)}</div>'
+    else:
+        history_html = '<p class="history-empty">暂无历史检测照片</p>'
+
     ts_label = ts[:19].replace("T", " ") if ts != "—" else "—"
     html = _WEB_PAGE_TEMPLATE.format(
         detection_count=count,
@@ -185,6 +225,8 @@ def _build_html() -> bytes:
         img_tag=img_tag,
         det_html=det_html,
         accumulated_html=accumulated_html,
+        history_count=len(history),
+        history_html=history_html,
     )
     return html.encode("utf-8")
 
@@ -217,6 +259,26 @@ class _DetectionHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(frame_bytes)
 
+        elif self.path.startswith("/history/"):
+            # Serve a historical frame by index: /history/{n}.jpg
+            m = re.match(r"^/history/(\d+)\.jpg$", self.path)
+            if not m:
+                self.send_error(404, "Invalid history path")
+                return
+            idx = int(m.group(1))
+            with _web_state["lock"]:
+                history = _web_state["frame_history"]
+                if idx < 0 or idx >= len(history):
+                    self.send_error(404, "History frame not found")
+                    return
+                frame_bytes = history[idx]["frame"]
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(frame_bytes)))
+            self.send_header("Cache-Control", "no-cache, no-store")
+            self.end_headers()
+            self.wfile.write(frame_bytes)
+
         elif self.path.startswith("/api/detections"):
             with _web_state["lock"]:
                 data = {
@@ -226,6 +288,15 @@ class _DetectionHandler(http.server.BaseHTTPRequestHandler):
                     "accumulated_detections": [
                         {"rid": rid, **v}
                         for rid, v in _web_state["accumulated_detections"].items()
+                    ],
+                    "history": [
+                        {
+                            "index": idx,
+                            "timestamp": entry["timestamp"],
+                            "detections": entry["detections"],
+                            "image_url": f"/history/{idx}.jpg",
+                        }
+                        for idx, entry in enumerate(_web_state["frame_history"])
                     ],
                 }
             body = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -678,15 +749,28 @@ def main():
                                 {"name": d["name"], "confidence": d["confidence"]}
                                 for d in high_conf
                             ]
+                            # Append to frame history (deque auto-evicts oldest entry when
+                            # the capacity limit MAX_HISTORY_FRAMES is reached).
+                            # Each entry captures the annotated frame, the detected
+                            # objects, and the timestamp for the web gallery.
+                            with _web_state["lock"]:
+                                _web_state["frame_history"].append({
+                                    "frame": frame_bytes,
+                                    "detections": display_detections,
+                                    "timestamp": ts.isoformat(),
+                                })
+                                frame_idx = len(_web_state["frame_history"]) - 1
+
                             # Accumulate unique detections by rid (one entry per unique track ID).
                             # When the same rid appears multiple times in one frame, the last
                             # entry wins – all originate from the same tracked object so any
-                            # is equivalent.
+                            # is equivalent.  frame_idx links each defect to its detection photo.
                             accumulated_update = {
                                 d["rid"]: {
                                     "name": d["name"],
                                     "confidence": d["confidence"],
                                     "timestamp": ts.isoformat(),
+                                    "frame_idx": frame_idx,
                                 }
                                 for d in high_conf
                                 if d["rid"] is not None

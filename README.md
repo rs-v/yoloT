@@ -257,12 +257,14 @@ http://localhost:8080/
 - 📷 **最新检测帧**：含目标框和中文标签的标注图像
 - 📋 **识别结果列表**：每个目标的类别名称（中文）和置信度百分比
 - 🕐 **检测时间戳**和累计检测事件数
+- 🖼️ **历史检测照片**：按时间倒序展示最近 50 次检测事件的照片；相同缺陷类型只要跟踪 ID（rid）不同，均作为独立事件记录并展示
 
 此外还提供 JSON API，方便外部系统集成：
 
 ```
-GET /api/detections   → {"detections":[{"name":"缺片","confidence":0.95}], "timestamp":"...", "detection_count":42}
+GET /api/detections   → {"detections":[...], "timestamp":"...", "detection_count":42, "accumulated_detections":[...], "history":[{"index":0,"timestamp":"...","detections":[...],"image_url":"/history/0.jpg"},...]}
 GET /latest.jpg       → 最新检测帧（JPEG）
+GET /history/{n}.jpg  → 第 n 帧历史检测图像（JPEG，n 从 0 开始，最多保留 50 帧）
 ```
 
 通过 `--web-port` 可更改端口，`--no-web` 可完全禁用：
