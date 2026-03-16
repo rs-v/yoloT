@@ -44,7 +44,7 @@ DEFAULT_NAMES = "zh_names.yaml"
 
 # Minimum confidence required to save a frame to disk and update the web panel.
 # Detections below this threshold are still tracked but not recorded.
-DEFAULT_SAVE_CONF = 0.85
+DEFAULT_SAVE_CONF = 0.7
 
 # Candidate CJK-capable font paths (searched in order on Linux/macOS systems).
 # Install one of the corresponding packages to enable Chinese label rendering,
