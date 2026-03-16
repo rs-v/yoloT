@@ -690,6 +690,9 @@ def main():
                 cv2.WND_PROP_FULLSCREEN,
                 cv2.WINDOW_FULLSCREEN,
             )
+    # Track which tracking IDs have already been saved to disk so that only
+    # the first detection image for each unique ID is persisted.
+    saved_rids = set()
     results = None
     try:
         results = model.track(
@@ -735,10 +738,15 @@ def main():
                     ts = datetime.datetime.now(datetime.timezone.utc)
                     ts_str = ts.strftime("%Y%m%d_%H%M%S_%f")
 
-                    # Save annotated frame to disk
-                    if save_dir:
+                    # Save annotated frame to disk only when the frame contains at
+                    # least one tracking ID that has not been saved before, so that
+                    # each unique tracked object is stored exactly once.
+                    all_rids = {d["rid"] for d in high_conf if d["rid"] is not None}
+                    new_rids = all_rids - saved_rids
+                    if save_dir and new_rids:
                         img_path = os.path.join(save_dir, f"detection_{ts_str}.jpg")
                         cv2.imwrite(img_path, annotated_frame)
+                        saved_rids.update(new_rids)
 
                     # Encode frame as JPEG for the web server
                     if web_server is not None:
