@@ -40,6 +40,10 @@ DEFAULT_TRACKER = "custom_tracker.yaml"   # or "botsort.yaml" / "bytetrack.yaml"
 DEFAULT_OUTPUT_RTSP = "rtsp://localhost:8554/live/tracking"
 DEFAULT_NAMES = "zh_names.yaml"
 
+# Minimum confidence required to save a frame to disk and update the web panel.
+# Detections below this threshold are still tracked but not recorded.
+DEFAULT_SAVE_CONF = 0.85
+
 # Candidate CJK-capable font paths (searched in order on Linux/macOS systems).
 # Install one of the corresponding packages to enable Chinese label rendering,
 # e.g. on Ubuntu/Debian:  sudo apt-get install fonts-wqy-microhei
@@ -74,10 +78,11 @@ WINDOW_NAME = "YOLO11 RTSP Tracking"
 # ---------------------------------------------------------------------------
 _web_state: dict = {
     "lock": threading.Lock(),
-    "latest_frame": None,       # bytes – JPEG-encoded annotated frame
-    "latest_detections": [],    # list of {"name": str, "confidence": float}
-    "latest_timestamp": None,   # ISO-8601 string
-    "detection_count": 0,       # total detection events since start
+    "latest_frame": None,           # bytes – JPEG-encoded annotated frame
+    "latest_detections": [],        # list of {"name": str, "confidence": float}
+    "latest_timestamp": None,       # ISO-8601 string
+    "detection_count": 0,           # total detection events since start
+    "accumulated_detections": {},   # rid(int) -> {"name": str, "confidence": float, "timestamp": str}
 }
 
 _WEB_PAGE_TEMPLATE = """\
@@ -86,10 +91,10 @@ _WEB_PAGE_TEMPLATE = """\
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>YOLO11 目标检测监控</title>
+  <title>YOLO11 金具故障监测系统</title>
   <style>
     body{{font-family:Arial,"Microsoft YaHei",sans-serif;margin:0;background:#1a1a2e;color:#eee}}
-    header{{background:#16213e;padding:16px 24px;display:flex;align-items:center;gap:12px}}
+    header{{background:#16213e;padding:16px 24px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}}
     header h1{{margin:0;font-size:1.4rem;color:#e94560}}
     .badge{{background:#0f3460;border-radius:12px;padding:4px 12px;font-size:.85rem}}
     .container{{display:flex;flex-wrap:wrap;gap:16px;padding:20px}}
@@ -101,6 +106,7 @@ _WEB_PAGE_TEMPLATE = """\
                   padding:8px 10px;margin-bottom:6px;background:#0f3460;border-radius:6px}}
     .det-name{{font-weight:bold;font-size:1rem}}
     .det-conf{{background:#e94560;border-radius:10px;padding:2px 10px;font-size:.8rem}}
+    .det-rid{{color:#aaa;font-size:.75rem;margin-left:6px}}
     .no-det{{color:#888;font-style:italic}}
     .meta{{font-size:.8rem;color:#888;margin-top:10px}}
     .refresh-note{{text-align:center;padding:10px;color:#555;font-size:.8rem}}
@@ -108,8 +114,9 @@ _WEB_PAGE_TEMPLATE = """\
 </head>
 <body>
   <header>
-    <h1>&#128247; YOLO11 目标检测监控</h1>
+    <h1>&#9889; YOLO11 金具故障监测系统</h1>
     <span class="badge">检测事件：{detection_count}</span>
+    <span class="badge">累计目标：{accumulated_count}</span>
     <span class="badge">{timestamp_label}</span>
   </header>
   <div class="container">
@@ -119,8 +126,12 @@ _WEB_PAGE_TEMPLATE = """\
       <p class="meta">检测时间：{timestamp}</p>
     </div>
     <div class="card">
-      <h2>识别结果</h2>
+      <h2>本帧识别结果</h2>
       {det_html}
+    </div>
+    <div class="card">
+      <h2>累计识别结果</h2>
+      {accumulated_html}
     </div>
   </div>
   <p class="refresh-note">页面每 2 秒自动刷新</p>
@@ -137,6 +148,7 @@ def _build_html() -> bytes:
         detections = list(_web_state["latest_detections"])
         ts = _web_state["latest_timestamp"] or "—"
         count = _web_state["detection_count"]
+        accumulated = dict(_web_state["accumulated_detections"])
 
     img_tag = (
         '<img class="frame-img" src="/latest.jpg" alt="最新检测帧">'
@@ -153,13 +165,26 @@ def _build_html() -> bytes:
     else:
         det_html = '<p class="no-det">等待检测结果…</p>'
 
+    if accumulated:
+        acc_items = "".join(
+            f'<li><span class="det-name">{v["name"]}</span>'
+            f'<span class="det-rid">ID:{rid}</span>'
+            f'<span class="det-conf">{v["confidence"]:.1%}</span></li>'
+            for rid, v in sorted(accumulated.items())
+        )
+        accumulated_html = f'<ul class="det-list">{acc_items}</ul>'
+    else:
+        accumulated_html = '<p class="no-det">暂无累计数据…</p>'
+
     ts_label = ts[:19].replace("T", " ") if ts != "—" else "—"
     html = _WEB_PAGE_TEMPLATE.format(
         detection_count=count,
+        accumulated_count=len(accumulated),
         timestamp_label=ts_label,
         timestamp=ts,
         img_tag=img_tag,
         det_html=det_html,
+        accumulated_html=accumulated_html,
     )
     return html.encode("utf-8")
 
@@ -198,6 +223,10 @@ class _DetectionHandler(http.server.BaseHTTPRequestHandler):
                     "detections": _web_state["latest_detections"],
                     "timestamp": _web_state["latest_timestamp"],
                     "detection_count": _web_state["detection_count"],
+                    "accumulated_detections": [
+                        {"rid": rid, **v}
+                        for rid, v in _web_state["accumulated_detections"].items()
+                    ],
                 }
             body = json.dumps(data, ensure_ascii=False).encode("utf-8")
             self.send_response(200)
@@ -429,6 +458,16 @@ def main():
             "Set to empty string ('') to disable frame saving."
         ),
     )
+    parser.add_argument(
+        "--save-conf",
+        type=float,
+        default=DEFAULT_SAVE_CONF,
+        metavar="THRESHOLD",
+        help=(
+            "Minimum confidence (0–1) required to save a frame to disk and update "
+            "the web panel. Detections below this threshold are tracked but not recorded."
+        ),
+    )
     args = parser.parse_args()
 
     show = not args.no_show
@@ -436,6 +475,7 @@ def main():
     fullscreen = args.fullscreen
     enable_web = not args.no_web
     save_dir = args.save_dir.strip() if args.save_dir else ""
+    save_conf_threshold = args.save_conf
 
     # Create the save directory early so the web server can mention its path.
     if save_dir:
@@ -536,7 +576,7 @@ def main():
     if enable_web:
         try:
             web_server = start_web_server(args.web_port)
-            print(f"[INFO] Web dashboard  : http://localhost:{args.web_port}/")
+            print(f"[INFO] Web dashboard  : http://0.0.0.0:{args.web_port}/")
         except OSError as exc:
             print(f"[WARN] Cannot start web server on port {args.web_port}: {exc}")
             web_server = None
@@ -608,32 +648,55 @@ def main():
             # ---- Save frame and update web state when objects are detected ----
             if result.boxes is not None and len(result.boxes) > 0:
                 names_map = result.names or {}
-                detections = [
+                all_detections = [
                     {
+                        "rid": int(box.id[0]) if box.id is not None and len(box.id) > 0 else None,
                         "name": names_map.get(int(box.cls[0]), str(int(box.cls[0]))),
                         "confidence": float(box.conf[0]),
                     }
                     for box in result.boxes
                 ]
 
-                ts = datetime.datetime.now(datetime.timezone.utc)
-                ts_str = ts.strftime("%Y%m%d_%H%M%S_%f")
+                # Only process detections with confidence above the save threshold
+                high_conf = [d for d in all_detections if d["confidence"] > save_conf_threshold]
 
-                # Save annotated frame to disk
-                if save_dir:
-                    img_path = os.path.join(save_dir, f"detection_{ts_str}.jpg")
-                    cv2.imwrite(img_path, annotated_frame)
+                if high_conf:
+                    ts = datetime.datetime.now(datetime.timezone.utc)
+                    ts_str = ts.strftime("%Y%m%d_%H%M%S_%f")
 
-                # Encode frame as JPEG for the web server
-                if web_server is not None:
-                    ok, buf = cv2.imencode(".jpg", annotated_frame)
-                    if ok:
-                        frame_bytes = buf.tobytes()
-                        with _web_state["lock"]:
-                            _web_state["latest_frame"] = frame_bytes
-                            _web_state["latest_detections"] = detections
-                            _web_state["latest_timestamp"] = ts.isoformat()
-                            _web_state["detection_count"] += 1
+                    # Save annotated frame to disk
+                    if save_dir:
+                        img_path = os.path.join(save_dir, f"detection_{ts_str}.jpg")
+                        cv2.imwrite(img_path, annotated_frame)
+
+                    # Encode frame as JPEG for the web server
+                    if web_server is not None:
+                        ok, buf = cv2.imencode(".jpg", annotated_frame)
+                        if ok:
+                            frame_bytes = buf.tobytes()
+                            display_detections = [
+                                {"name": d["name"], "confidence": d["confidence"]}
+                                for d in high_conf
+                            ]
+                            # Accumulate unique detections by rid (one entry per unique track ID).
+                            # When the same rid appears multiple times in one frame, the last
+                            # entry wins – all originate from the same tracked object so any
+                            # is equivalent.
+                            accumulated_update = {
+                                d["rid"]: {
+                                    "name": d["name"],
+                                    "confidence": d["confidence"],
+                                    "timestamp": ts.isoformat(),
+                                }
+                                for d in high_conf
+                                if d["rid"] is not None
+                            }
+                            with _web_state["lock"]:
+                                _web_state["latest_frame"] = frame_bytes
+                                _web_state["latest_detections"] = display_detections
+                                _web_state["latest_timestamp"] = ts.isoformat()
+                                _web_state["detection_count"] += 1
+                                _web_state["accumulated_detections"].update(accumulated_update)
 
             # ---- Local display window ----
             if show:
