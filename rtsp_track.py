@@ -751,7 +751,7 @@ def main():
                     # first time.  This keeps disk save and web history fully
                     # in sync: both record exactly one entry per unique rid.
                     if new_rids:
-                        ts = datetime.datetime.now(datetime.timezone.utc)
+                        ts = datetime.datetime.now().astimezone()
                         ts_str = ts.strftime("%Y%m%d_%H%M%S_%f")
 
                         # Mark IDs as seen before any I/O so that both disk
