@@ -15,6 +15,7 @@ Features:
 import argparse
 import collections
 import datetime
+import errno
 import http.server
 import json
 import os
@@ -693,7 +694,7 @@ def main():
     tty_fd = None
     if tty_device:
         try:
-            tty_fd = os.open(tty_device, os.O_WRONLY | os.O_NOCTTY)
+            tty_fd = os.open(tty_device, os.O_WRONLY | os.O_NOCTTY | os.O_NONBLOCK)
             print(f"[INFO] TTY output     : {tty_device}")
         except OSError as exc:
             print(f"[WARN] Cannot open TTY device {tty_device}: {exc}")
@@ -795,10 +796,14 @@ def main():
                         # zero-padded (5-digit) class ID.
                         if tty_fd is not None:
                             for rid in sorted(new_fault_detections_by_rid):
-                                cmd = build_fault_command(new_fault_detections_by_rid[rid]["class_id"])
+                                detection = new_fault_detections_by_rid[rid]
+                                cmd = build_fault_command(detection["class_id"])
                                 try:
                                     os.write(tty_fd, cmd)
                                 except OSError as exc:
+                                    if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                                        print(f"[WARN] TTY device busy, skipped fault command on {tty_device}")
+                                        continue
                                     print(f"[WARN] Failed to write fault command to {tty_device}: {exc}")
 
                         # Save annotated frame to disk (one image per unique tracking ID).
