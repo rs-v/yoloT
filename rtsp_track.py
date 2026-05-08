@@ -21,6 +21,7 @@ import json
 import os
 import re
 import socketserver
+import stat
 import subprocess
 import threading
 import time
@@ -411,6 +412,24 @@ def build_fault_command(class_id: int) -> bytes:
     return f"S {class_id:05d};".encode("ascii")
 
 
+def write_tty_command(tty_fd: int, command: bytes, tty_device: str) -> None:
+    """Write the full command to a TTY device, handling partial writes safely."""
+    offset = 0
+    while offset < len(command):
+        try:
+            written = os.write(tty_fd, command[offset:])
+            if written <= 0:
+                print(f"[WARN] Failed to write fault command to {tty_device}: short write")
+                return
+            offset += written
+        except OSError as exc:
+            if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                print(f"[WARN] TTY device busy, skipped fault command on {tty_device}")
+            else:
+                print(f"[WARN] Failed to write fault command to {tty_device}: {exc}")
+            return
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="YOLO11 object tracking on an RTSP stream with live display and RTSP output.",
@@ -694,6 +713,9 @@ def main():
     tty_fd = None
     if tty_device:
         try:
+            tty_mode = os.stat(tty_device).st_mode
+            if not stat.S_ISCHR(tty_mode):
+                raise OSError(f"{tty_device} is not a character device")
             tty_fd = os.open(tty_device, os.O_WRONLY | os.O_NOCTTY | os.O_NONBLOCK)
             print(f"[INFO] TTY output     : {tty_device}")
         except OSError as exc:
@@ -798,13 +820,7 @@ def main():
                             for rid in sorted(new_fault_detections_by_rid):
                                 detection = new_fault_detections_by_rid[rid]
                                 cmd = build_fault_command(detection["class_id"])
-                                try:
-                                    os.write(tty_fd, cmd)
-                                except OSError as exc:
-                                    if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
-                                        print(f"[WARN] TTY device busy, skipped fault command on {tty_device}")
-                                    else:
-                                        print(f"[WARN] Failed to write fault command to {tty_device}: {exc}")
+                                write_tty_command(tty_fd, cmd, tty_device)
 
                         # Save annotated frame to disk (one image per unique tracking ID).
                         if save_dir:
