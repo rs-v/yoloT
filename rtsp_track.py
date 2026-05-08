@@ -693,7 +693,7 @@ def main():
     tty_fd = None
     if tty_device:
         try:
-            tty_fd = os.open(tty_device, os.O_WRONLY | os.O_NOCTTY | os.O_NONBLOCK)
+            tty_fd = os.open(tty_device, os.O_WRONLY | os.O_NOCTTY)
             print(f"[INFO] TTY output     : {tty_device}")
         except OSError as exc:
             print(f"[WARN] Cannot open TTY device {tty_device}: {exc}")
@@ -800,7 +800,6 @@ def main():
                                     os.write(tty_fd, cmd)
                                 except OSError as exc:
                                     print(f"[WARN] Failed to write fault command to {tty_device}: {exc}")
-                                    break
 
                         # Save annotated frame to disk (one image per unique tracking ID).
                         if save_dir:
