@@ -219,6 +219,7 @@ python rtsp_track.py --output-rtsp rtsp://localhost:8554/live/output
 | `--no-web` | — | 禁用 Web 监控面板 |
 | `--web-port` | `8080` | Web 监控面板监听端口 |
 | `--save-dir` | `saved_frames` | 保存检测帧的目录；设为空字符串 `''` 可禁用帧保存 |
+| `--tty-device` | `/dev/ttyACM0` | 检测到新故障时发送串口命令的设备路径；设为空字符串 `''` 可禁用串口输出 |
 
 ---
 
@@ -246,6 +247,26 @@ python rtsp_track.py --save-dir /data/detections
 
 # 禁用帧保存
 python rtsp_track.py --save-dir ""
+```
+
+### 串口故障命令输出（ttyACM0）
+
+当检测到新的故障跟踪 ID（与保存检测帧触发条件一致）时，脚本会向 `--tty-device` 指定的串口设备发送命令，默认设备为 `/dev/ttyACM0`。
+
+- 命令格式：`S xxxxx c.cccc;`
+- `xxxxx` 为 5 位零填充的故障类别 ID，`c.cccc` 为置信度（0~1）
+- 例如类别 12、置信度 0.8732 会发送 `S 00012 0.8732;`
+- 若串口打开或写入失败，仅打印告警日志，不会中断检测流程
+
+```bash
+# 使用默认 /dev/ttyACM0
+python rtsp_track.py
+
+# 指定其他串口设备
+python rtsp_track.py --tty-device /dev/ttyUSB0
+
+# 禁用串口输出
+python rtsp_track.py --tty-device ""
 ```
 
 ### Web 监控面板
