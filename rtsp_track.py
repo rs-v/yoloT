@@ -41,6 +41,7 @@ DEFAULT_MODEL = "best_640_s.pt"
 DEFAULT_TRACKER = "custom_tracker.yaml"   # or "botsort.yaml" / "bytetrack.yaml"
 DEFAULT_OUTPUT_RTSP = "rtsp://localhost:8554/live/tracking"
 DEFAULT_NAMES = "zh_names.yaml"
+DEFAULT_TTY_DEVICE = "/dev/ttyACM0"
 
 # Minimum confidence required to save a frame to disk and update the web panel.
 # Detections below this threshold are still tracked but not recorded.
@@ -404,6 +405,11 @@ def open_capture(source: str, retries: int = 5, delay: float = 2.0) -> cv2.Video
     raise RuntimeError(f"Cannot open video source after {retries} attempts: {source}")
 
 
+def build_fault_command(class_id: int) -> bytes:
+    """Build a serial command in `S xxxxx;` format for a detected fault class."""
+    return f"S {class_id:05d};\n".encode("ascii")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="YOLO11 object tracking on an RTSP stream with live display and RTSP output.",
@@ -539,6 +545,15 @@ def main():
             "the web panel. Detections below this threshold are tracked but not recorded."
         ),
     )
+    parser.add_argument(
+        "--tty-device",
+        default=DEFAULT_TTY_DEVICE,
+        metavar="TTY",
+        help=(
+            "Serial device path used to send fault commands in `S xxxxx;` format. "
+            "Set to empty string ('') to disable serial output."
+        ),
+    )
     args = parser.parse_args()
 
     show = not args.no_show
@@ -547,6 +562,7 @@ def main():
     enable_web = not args.no_web
     save_dir = args.save_dir.strip() if args.save_dir else ""
     save_conf_threshold = args.save_conf
+    tty_device = args.tty_device.strip() if args.tty_device else ""
 
     # Create the save directory early so the web server can mention its path.
     if save_dir:
@@ -672,6 +688,18 @@ def main():
             ffmpeg_proc = None
 
     # ------------------------------------------------------------------
+    # Open serial output for fault commands (optional)
+    # ------------------------------------------------------------------
+    tty_fd = None
+    if tty_device:
+        try:
+            tty_fd = os.open(tty_device, os.O_WRONLY | os.O_NOCTTY | os.O_NONBLOCK)
+            print(f"[INFO] TTY output     : {tty_device}")
+        except OSError as exc:
+            print(f"[WARN] Cannot open TTY device {tty_device}: {exc}")
+            tty_fd = None
+
+    # ------------------------------------------------------------------
     # Run YOLO11 tracking in streaming mode
     #
     # Key parameters (see https://docs.ultralytics.com/modes/track/):
@@ -725,6 +753,7 @@ def main():
                 all_detections = [
                     {
                         "rid": int(box.id[0]) if box.id is not None and len(box.id) > 0 else None,
+                        "class_id": int(box.cls[0]),
                         "name": names_map.get(int(box.cls[0]), str(int(box.cls[0]))),
                         "confidence": float(box.conf[0]),
                     }
@@ -753,10 +782,25 @@ def main():
                     if new_rids:
                         ts = datetime.datetime.now(datetime.timezone.utc)
                         ts_str = ts.strftime("%Y%m%d_%H%M%S_%f")
+                        new_fault_detections = {
+                            d["rid"]: d for d in high_conf if d["rid"] in new_rids
+                        }
 
                         # Mark IDs as seen before any I/O so that both disk
                         # and web operate on the same "new rid" condition.
                         saved_rids.update(new_rids)
+
+                        # Send fault command over ttyACM0-compatible device:
+                        # command format is `S xxxxx;` where xxxxx is a
+                        # zero-padded (5-digit) class ID.
+                        if tty_fd is not None:
+                            for rid in sorted(new_fault_detections):
+                                cmd = build_fault_command(new_fault_detections[rid]["class_id"])
+                                try:
+                                    os.write(tty_fd, cmd)
+                                except OSError as exc:
+                                    print(f"[WARN] Failed to write fault command to {tty_device}: {exc}")
+                                    break
 
                         # Save annotated frame to disk (one image per unique tracking ID).
                         if save_dir:
@@ -851,6 +895,8 @@ def main():
             ffmpeg_proc.wait()
         if web_server is not None:
             web_server.shutdown()
+        if tty_fd is not None:
+            os.close(tty_fd)
         print("[INFO] Done.")
 
 
