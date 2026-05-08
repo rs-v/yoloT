@@ -803,8 +803,8 @@ def main():
                                 except OSError as exc:
                                     if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
                                         print(f"[WARN] TTY device busy, skipped fault command on {tty_device}")
-                                        continue
-                                    print(f"[WARN] Failed to write fault command to {tty_device}: {exc}")
+                                    else:
+                                        print(f"[WARN] Failed to write fault command to {tty_device}: {exc}")
 
                         # Save annotated frame to disk (one image per unique tracking ID).
                         if save_dir:
