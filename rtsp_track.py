@@ -407,9 +407,9 @@ def open_capture(source: str, retries: int = 5, delay: float = 2.0) -> cv2.Video
     raise RuntimeError(f"Cannot open video source after {retries} attempts: {source}")
 
 
-def build_fault_command(class_id: int) -> bytes:
-    """Build a serial command in `S xxxxx;` format for a detected fault class."""
-    return f"S {class_id:05d};".encode("ascii")
+def build_fault_command(class_id: int, confidence: float) -> bytes:
+    """Build a serial command in `S xxxxx c.cccc;` format for a detected fault."""
+    return f"S {class_id:05d} {confidence:.4f};".encode("ascii")
 
 
 def write_tty_command(tty_fd: int, command: bytes, tty_device: str) -> None:
@@ -570,7 +570,8 @@ def main():
         default=DEFAULT_TTY_DEVICE,
         metavar="TTY",
         help=(
-            "Serial device path used to send fault commands in `S xxxxx;` format. "
+            "Serial device path used to send fault commands in "
+            "`S xxxxx c.cccc;` format. "
             "Set to empty string ('') to disable serial output."
         ),
     )
@@ -814,12 +815,15 @@ def main():
                         saved_rids.update(new_rids)
 
                         # Send fault command over the configured TTY device:
-                        # command format is `S xxxxx;` where xxxxx is a
-                        # zero-padded (5-digit) class ID.
+                        # command format is `S xxxxx c.cccc;` where xxxxx is a
+                        # zero-padded (5-digit) class ID and c.cccc is confidence.
                         if tty_fd is not None:
                             for rid in sorted(new_fault_detections_by_rid):
                                 detection = new_fault_detections_by_rid[rid]
-                                cmd = build_fault_command(detection["class_id"])
+                                cmd = build_fault_command(
+                                    detection["class_id"],
+                                    detection["confidence"],
+                                )
                                 write_tty_command(tty_fd, cmd, tty_device)
 
                         # Save annotated frame to disk (one image per unique tracking ID).
