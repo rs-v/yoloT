@@ -407,7 +407,7 @@ def open_capture(source: str, retries: int = 5, delay: float = 2.0) -> cv2.Video
 
 def build_fault_command(class_id: int) -> bytes:
     """Build a serial command in `S xxxxx;` format for a detected fault class."""
-    return f"S {class_id:05d};\n".encode("ascii")
+    return f"S {class_id:05d};".encode("ascii")
 
 
 def main():
@@ -782,7 +782,7 @@ def main():
                     if new_rids:
                         ts = datetime.datetime.now(datetime.timezone.utc)
                         ts_str = ts.strftime("%Y%m%d_%H%M%S_%f")
-                        new_fault_detections = {
+                        new_fault_detections_by_rid = {
                             d["rid"]: d for d in high_conf if d["rid"] in new_rids
                         }
 
@@ -790,12 +790,12 @@ def main():
                         # and web operate on the same "new rid" condition.
                         saved_rids.update(new_rids)
 
-                        # Send fault command over ttyACM0-compatible device:
+                        # Send fault command over the configured TTY device:
                         # command format is `S xxxxx;` where xxxxx is a
                         # zero-padded (5-digit) class ID.
                         if tty_fd is not None:
-                            for rid in sorted(new_fault_detections):
-                                cmd = build_fault_command(new_fault_detections[rid]["class_id"])
+                            for rid in sorted(new_fault_detections_by_rid):
+                                cmd = build_fault_command(new_fault_detections_by_rid[rid]["class_id"])
                                 try:
                                     os.write(tty_fd, cmd)
                                 except OSError as exc:
