@@ -418,7 +418,7 @@ def write_tty_command(tty_fd: int, command: bytes, tty_device: str) -> None:
     while offset < len(command):
         try:
             written = os.write(tty_fd, command[offset:])
-            if written <= 0:
+            if written == 0:
                 print(f"[WARN] Failed to write fault command to {tty_device}: short write")
                 return
             offset += written
