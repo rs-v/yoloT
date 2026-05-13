@@ -23,6 +23,7 @@ import re
 import socketserver
 import stat
 import subprocess
+import termios
 import threading
 import time
 
@@ -413,21 +414,14 @@ def build_fault_command(class_id: int, confidence: float) -> bytes:
 
 
 def write_tty_command(tty_fd: int, command: bytes, tty_device: str) -> None:
-    """Write the full command to a TTY device, handling partial writes safely."""
-    offset = 0
-    while offset < len(command):
-        try:
-            written = os.write(tty_fd, command[offset:])
-            if written == 0:
-                print(f"[WARN] Failed to write fault command to {tty_device}: short write")
-                return
-            offset += written
-        except OSError as exc:
-            if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
-                print(f"[WARN] TTY device busy, skipped fault command on {tty_device}")
-            else:
-                print(f"[WARN] Failed to write fault command to {tty_device}: {exc}")
-            return
+    """Write the full command to a TTY device and wait until the bytes are transmitted."""
+    try:
+        with os.fdopen(os.dup(tty_fd), "wb", buffering=0, closefd=True) as tty_file:
+            tty_file.write(command)
+            tty_file.flush()
+        termios.tcdrain(tty_fd)
+    except OSError as exc:
+        print(f"[WARN] Failed to write fault command to {tty_device}: {exc}")
 
 
 def main():
@@ -717,7 +711,7 @@ def main():
             tty_mode = os.stat(tty_device).st_mode
             if not stat.S_ISCHR(tty_mode):
                 raise OSError(f"{tty_device} is not a character device")
-            tty_fd = os.open(tty_device, os.O_WRONLY | os.O_NOCTTY | os.O_NONBLOCK)
+            tty_fd = os.open(tty_device, os.O_WRONLY | os.O_NOCTTY)
             print(f"[INFO] TTY output     : {tty_device}")
         except OSError as exc:
             print(f"[WARN] Cannot open TTY device {tty_device}: {exc}")
@@ -825,6 +819,7 @@ def main():
                                     detection["confidence"],
                                 )
                                 write_tty_command(tty_fd, cmd, tty_device)
+                                time.sleep(0.05)
 
                         # Save annotated frame to disk (one image per unique tracking ID).
                         if save_dir:
